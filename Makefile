@@ -5,7 +5,7 @@ CFLAGS	= -O2 -Wall $(shell sdl-config --cflags) $(DBG)
 all: bomber matcher
 
 bomber:	bomber.o gfx.o sound.o matcher
-	gcc -o bomber bomber.o gfx.o sound.o $(shell sdl-config --libs) $(DBG)
+	gcc -o bomber bomber.o gfx.o sound.o $(shell sdl-config --libs) $(DBG) -lSDL_mixer
 
 matcher: matcher.c
 

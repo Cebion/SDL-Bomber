@@ -2,8 +2,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <fcntl.h>
-#include <SDL_audio.h>
-#include <SDL_error.h>
+#include <SDL/SDL.h>
+#include <SDL/SDL_mixer.h>
 
 char dirlist[]="data";
 
@@ -16,17 +16,18 @@ int readsound(int num);
 
 char *soundnames[] =
 {
-"bomb1.raw",
-"power1.raw",
-"death.raw",
-"drop.raw",
-"bomb2.raw",
-"power2.raw",
+"bomb1.wav",
+"power1.wav",
+"death.wav",
+"drop.wav",
+"bomb2.wav",
+"power2.wav",
 };
+
 typedef struct sample
 {
-	char *data;
-	int len;
+    Mix_Chunk *chunk;
+    int len;
 } sample;
 
 #define SNDFRAGMENT 1024
@@ -34,151 +35,77 @@ typedef struct sample
 sample samples[NUMSOUNDS];
 
 int soundworking=0;
-int fragment;
-int soundwrite,soundread;
-int *soundbuffer;
-int soundbufferlen;
-unsigned char sndclip[8192];
-
-#define MAXSOUNDCOMMANDS 32
-char soundcommands[MAXSOUNDCOMMANDS];
-int soundtake,soundput;
-
-int sndplaying[MIXMAX],sndposition[MIXMAX];
-void fillaudio(void *udata,Uint8 *buffer,int len)
-{
-char com,*p;
-int i,j,*ip;
-int which;
-
-	while(soundtake!=soundput)
-	{
-		com=soundcommands[soundtake];
-		soundtake=(soundtake+1)&(MAXSOUNDCOMMANDS-1);
-		if(com==SOUND_QUIET) {memset(sndposition,0,sizeof(sndposition));continue;}
-		if(com<NUMSOUNDS)
-		{
-			for(i=0;i<MIXMAX;++i)
-				if(!sndposition[i])
-				{
-					sndposition[i]=1;
-					sndplaying[i]=com;
-					break;
-				}
-		}
-	}
-	memset(soundbuffer,0,soundbufferlen);
-	for(i=0;i<MIXMAX;++i)
-	{
-		if(!sndposition[i]) continue;
-		which=sndplaying[i];
-		if(sndposition[i]==samples[which].len)
-		{
-			sndposition[i]=0;
-			continue;
-		}
-		p=samples[which].data;
-		if(!p) continue;
-		p+=len*(sndposition[i]++ -1);
-		ip=soundbuffer;
-		j=len;
-		while(j--) *ip++ += *p++;
-	}
-	j=len;
-	ip=soundbuffer;;
-	while(j--) *buffer++ = sndclip[4096+*ip++];
-
-}
-
 
 int soundopen(void)
 {
-SDL_AudioSpec wanted;
-int i,j;
+    int i;
 
-	soundtake=soundput=0;
-	memset(sndposition,0,sizeof(sndposition));
-	memset(sndplaying,0,sizeof(sndplaying));
-	fragment=SNDFRAGMENT<<1;
-	soundbufferlen=fragment*sizeof(int);
-	soundbuffer=malloc(soundbufferlen);
-	if(!soundbuffer) return -2;
+    if (SDL_Init(SDL_INIT_AUDIO) < 0) {
+        fprintf(stderr, "SDL could not initialize! SDL Error: %s\n", SDL_GetError());
+        return -1;
+    }
 
-	memset(&wanted,0,sizeof(wanted));
-	wanted.freq=22050;
-	wanted.channels=2;
-	wanted.format=AUDIO_U8;
-	wanted.samples=fragment>>1;
-	wanted.callback=fillaudio;
-	wanted.userdata=0;
+    if (Mix_OpenAudio(44100, MIX_DEFAULT_FORMAT, 2, 1024) < 0) {
+        fprintf(stderr, "SDL_mixer could not initialize! SDL_mixer Error: %s\n", Mix_GetError());
+        return -1;
+    }
 
-	if(SDL_OpenAudio(&wanted,0)<0)
-	{
-		fprintf(stderr,"Couldn't open audio: %s\n",SDL_GetError());
-		return -1;
-	}
-	soundworking=1;
+    for (i = 0; i < NUMSOUNDS; ++i) {
+        if (readsound(i) != 0) {
+            fprintf(stderr, "Failed to load sound %d\n", i);
+            return -1;
+        }
+    }
 
-	for(i=0;i<8192;i++)
-	{
-		j=i-4096;
-		sndclip[i]=j > 127 ? 255 : (j<-128 ? 0 : j+128);
-	}
-
-	for(i=0;i<NUMSOUNDS;++i)
-		readsound(i);
-
-	SDL_PauseAudio(0);
-	return 0;
+    soundworking = 1;
+    return 0;
 }
+
 void soundclose(void)
 {
-	if(soundworking)
-	{
-		SDL_CloseAudio();
-		soundworking=0;
-	}
+    int i;
+    if (soundworking) {
+        for (i = 0; i < NUMSOUNDS; ++i) {
+            if (samples[i].chunk) {
+                Mix_FreeChunk(samples[i].chunk);
+                samples[i].chunk = NULL;
+            }
+        }
+        Mix_CloseAudio();
+        SDL_Quit();
+        soundworking = 0;
+    }
 }
 
 
 int readsound(int num)
 {
-char name[256],*p1,*p2,ch;
-int i,file,size,len;
-	p1=dirlist;
-	for(;;)
-	{
-		p2=name;
-		while(*p1 && (ch=*p1++)!=',')
-			*p2++=ch;
-		if(p2>name && p2[-1]!='/') *p2++='/';
-		strcpy(p2,soundnames[num]);
-		file=open(name,O_RDONLY);
-		if(file>=0) break;
-		if(!*p1)
-		{
-			samples[num].len=-1;
-			return 0;
-		}
-	}
-	size=lseek(file,0,SEEK_END);
-	lseek(file,0,SEEK_SET);
-	len=samples[num].len=(size+fragment-1)/fragment;
-	len*=fragment;
-	p1=samples[num].data=malloc(len);
-	if(p1)
-	{
-		i=read(file,p1,size);
-		if(len-size) memset(p1+size,0,len-size);
-		while(size--) *p1++ ^= 0x80;
-	} else
-		samples[num].data=0;
-	close(file);
-	return 0;
+    char name[256], *p1, *p2, ch;
+    p1 = dirlist;
+    for (;;) {
+        p2 = name;
+        while (*p1 && (ch = *p1++) != ',')
+            *p2++ = ch;
+        if (p2 > name && p2[-1] != '/')
+            *p2++ = '/';
+        strcpy(p2, soundnames[num]);
+        
+        samples[num].chunk = Mix_LoadWAV(name);
+        if (samples[num].chunk) {
+            samples[num].len = samples[num].chunk->alen;
+            break;
+        }
+        if (!*p1) {
+            fprintf(stderr, "Failed to load sound: %s\n", Mix_GetError());
+            return -1;
+        }
+    }
+    return 0;
 }
 
 void playsound(int n)
 {
-	soundcommands[soundput]=n;
-	soundput=(soundput+1)&(MAXSOUNDCOMMANDS-1);
+    if (n >= 0 && n < NUMSOUNDS && samples[n].chunk) {
+        Mix_PlayChannel(-1, samples[n].chunk, 0);
+    }
 }
